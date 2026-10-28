@@ -18,3 +18,4 @@ parking_lot = { workspace = true }
 config = { workspace = true }
 figment = { workspace = true }
 async-trait = { workspace = true }
+reqwest = { workspace = true }

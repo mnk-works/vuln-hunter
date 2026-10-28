@@ -115,15 +115,25 @@ impl EventIndexer {
     ) -> Result<()> {
         info!("Starting event indexer");
 
-        // Create filter for relevant events
-        let filter = Filter::new()
-            .event_signature(Topic::from("Transfer(address,address,uint256)".parse::<alloy::primitives::FixedBytes<32>>().unwrap()))
-            .event_signature(Topic::from("PairCreated(address,address,address,uint256)".parse::<alloy::primitives::FixedBytes<32>>().unwrap()))
-            .event_signature(Topic::from("PoolCreated(address,address,uint24,int24,address)".parse::<alloy::primitives::FixedBytes<32>>().unwrap()));
-
-        let sub = provider.subscribe_logs(&filter).await?;
+        // Create filter for relevant events using exact topic hashes
+        let transfer_topic = Topic::from(
+            alloy::primitives::U256::from_str_radix("ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", 16).unwrap()
+        );
+        let pair_created_topic = Topic::from(
+            alloy::primitives::U256::from_str_radix("0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad835540de74e0b6d9b3c5b0", 16).unwrap()
+        );
+        let pool_created_topic = Topic::from(
+            alloy::primitives::U256::from_str_radix("783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118", 16).unwrap()
+        );
         
-        // Convert subscription to stream
+        let filter = Filter::new()
+            .event_signature(transfer_topic)
+            .event_signature(pair_created_topic)
+            .event_signature(pool_created_topic);
+
+        let sub = provider.subscribe(&filter).await?;
+        
+        // Convert subscription to stream using into_stream()
         let mut stream = sub.into_stream();
         
         while let Some(log) = stream.next().await {
@@ -214,7 +224,7 @@ impl EventIndexer {
             0x95, 0x2b, 0xa7, 0xf1, 0x63, 0xc4, 0xa1, 0x16,
             0x28, 0xf5, 0x5a, 0x4d, 0xf5, 0x23, 0xb3, 0xef,
         ]);
-
+        
         // PairCreated: 0x0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad835540de74e0b6d9b3c5b0
         const PAIR_CREATED_TOPIC: B256 = B256::new([
             0x0d, 0x36, 0x48, 0xbd, 0x0f, 0x6b, 0xa8, 0x01,

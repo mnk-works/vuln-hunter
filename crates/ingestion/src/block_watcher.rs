@@ -1,34 +1,30 @@
-//! Block watcher: subscribes to new blocks via WebSocket, fetches full block
-//! with transactions and receipts, extracts contract deployments.
-
-use alloy::providers::Provider;
 use alloy::network::TransactionResponse;
+// Block watcher: polls for new blocks via HTTP, fetches full block
+// with transactions and receipts, extracts contract deployments.
+
 use vuln_common::{BlockHeader, ContractDeployment, Transaction, TransactionReceipt, HunterConfig, ChainConfig};
 use alloy::{
-    providers::{ProviderBuilder, WsConnect},
-    rpc::types::{Block},
+    providers::{Provider, ProviderBuilder},
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use dashmap::DashMap;
-use futures::StreamExt;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::time::{interval, Duration};
 use tracing::{debug, error, info, warn};
-
-// Type alias for the provider with boxed transport
-type BoxedProvider = alloy::providers::RootProvider<alloy::transports::BoxTransport>;
 
 /// Maximum deployments to keep in memory
 const MAX_DEPLOYMENTS: usize = 10_000;
 
-/// Block watcher handles new block subscriptions and deployment extraction
+/// Block watcher polls for new blocks via HTTP, extracts contract deployments
 pub struct BlockWatcher {
     config: Arc<HunterConfig>,
     chain_config: ChainConfig,
-    provider: BoxedProvider,
+    http_provider: alloy::providers::RootProvider<alloy::transports::http::Http<reqwest::Client>>,
     deployments: Arc<DashMap<String, ContractDeployment>>,
     deployment_tx: mpsc::UnboundedSender<ContractDeployment>,
     processor_tx: mpsc::UnboundedSender<(BlockHeader, Vec<Transaction>, Vec<TransactionReceipt>)>,
+    last_block: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl BlockWatcher {
@@ -37,13 +33,8 @@ impl BlockWatcher {
             .context("No chain configured")?
             .clone();
 
-        // Build WebSocket provider
-        let ws_connect = WsConnect::new(&chain_config.ws_url);
-        let provider = ProviderBuilder::new()
-            .on_ws(ws_connect)
-            .await
-            .context("Failed to connect to WebSocket")?
-            .boxed();
+        let http_provider = ProviderBuilder::new()
+            .on_http(chain_config.rpc_url.parse()?);
 
         let (deployment_tx, _) = mpsc::unbounded_channel();
         let (processor_tx, _) = mpsc::unbounded_channel();
@@ -51,35 +42,35 @@ impl BlockWatcher {
         Ok(Self {
             config,
             chain_config,
-            provider,
+            http_provider,
             deployments: Arc::new(DashMap::new()),
             deployment_tx,
             processor_tx,
+            last_block: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
-    /// Subscribe to new deployments
     pub fn subscribe_deployments(&self) -> mpsc::UnboundedReceiver<ContractDeployment> {
         let (tx, rx) = mpsc::unbounded_channel();
         rx
     }
 
-    /// Subscribe to full block data for processors
     pub fn subscribe_blocks(&self) -> mpsc::UnboundedReceiver<(BlockHeader, Vec<Transaction>, Vec<TransactionReceipt>)> {
         let (tx, rx) = mpsc::unbounded_channel();
         rx
     }
 
-    /// Start watching for new blocks
     pub async fn start(&self) -> Result<tokio::task::JoinHandle<()>> {
-        let provider = self.provider.clone();
+        let http_provider = self.http_provider.clone();
         let deployments = self.deployments.clone();
         let deployment_tx = self.deployment_tx.clone();
         let processor_tx = self.processor_tx.clone();
         let chain_id = self.chain_config.chain_id;
+        let last_block = self.last_block.clone();
+        let poll_interval = Duration::from_secs(3);
 
         let handle = tokio::spawn(async move {
-            if let Err(e) = Self::run_watcher(provider, deployments, deployment_tx, processor_tx, chain_id).await {
+            if let Err(e) = Self::run_poller(http_provider, deployments, deployment_tx, processor_tx, chain_id, last_block, Duration::from_secs(3)).await {
                 error!("Block watcher error: {}", e);
             }
         });
@@ -87,65 +78,100 @@ impl BlockWatcher {
         Ok(handle)
     }
 
-    async fn run_watcher(
-        provider: BoxedProvider,
+    async fn run_poller(
+        provider: alloy::providers::RootProvider<alloy::transports::http::Http<reqwest::Client>>,
         deployments: Arc<DashMap<String, ContractDeployment>>,
         deployment_tx: mpsc::UnboundedSender<ContractDeployment>,
         processor_tx: mpsc::UnboundedSender<(BlockHeader, Vec<Transaction>, Vec<TransactionReceipt>)>,
         chain_id: u64,
+        last_block: Arc<std::sync::atomic::AtomicU64>,
+        poll_interval: Duration,
     ) -> Result<()> {
-        info!("Starting block watcher for chain {}", chain_id);
+        info!("Starting HTTP block poller for chain {}", chain_id);
 
-        // Subscribe to new blocks
-        let sub = provider.subscribe_blocks().await?;
-        let mut stream = sub.into_stream();
+        let mut interval = interval(Duration::from_secs(3));
+        
+        let latest = provider.get_block_number().await?;
+        last_block.store(latest, std::sync::atomic::Ordering::Relaxed);
+        info!("Starting poll from block {}", latest);
 
-        while let Some(block) = stream.next().await {
-            if let Err(e) = Self::process_block(
+        loop {
+            interval.tick().await;
+            
+            if let Err(e) = Self::poll_once(
                 &provider,
                 &deployments,
                 &deployment_tx,
                 &processor_tx,
-                block,
                 chain_id,
+                &last_block,
             ).await {
-                warn!("Error processing block: {}", e);
+                warn!("Error polling block: {}", e);
+            }
+        }
+    }
+
+    async fn poll_once(
+        provider: &alloy::providers::RootProvider<alloy::transports::http::Http<reqwest::Client>>,
+        deployments: &Arc<DashMap<String, ContractDeployment>>,
+        deployment_tx: &mpsc::UnboundedSender<ContractDeployment>,
+        processor_tx: &mpsc::UnboundedSender<(BlockHeader, Vec<Transaction>, Vec<TransactionReceipt>)>,
+        chain_id: u64,
+        last_block: &Arc<std::sync::atomic::AtomicU64>,
+    ) -> Result<()> {
+        let latest_block = provider.get_block_number().await?;
+        let last_known = last_block.load(std::sync::atomic::Ordering::Relaxed);
+        
+        if latest_block <= last_known {
+            return Ok(());
+        }
+
+        info!("New blocks detected: {} to {}", last_known + 1, latest_block);
+        
+        for block_num in (last_known + 1)..=latest_block {
+            if let Err(e) = Self::process_block(
+                provider,
+                deployments,
+                deployment_tx,
+                processor_tx,
+                block_num,
+            ).await {
+                warn!("Error processing block {}: {}", block_num, e);
             }
         }
 
+        last_block.store(latest_block, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
     async fn process_block(
-        provider: &BoxedProvider,
+        provider: &alloy::providers::RootProvider<alloy::transports::http::Http<reqwest::Client>>,
         deployments: &Arc<DashMap<String, ContractDeployment>>,
         deployment_tx: &mpsc::UnboundedSender<ContractDeployment>,
         processor_tx: &mpsc::UnboundedSender<(BlockHeader, Vec<Transaction>, Vec<TransactionReceipt>)>,
-        block: Block,
-        chain_id: u64,
+        block_number: u64,
     ) -> Result<()> {
-        let block_number = block.header.number;
+        debug!("Processing block {}", block_number);
+
+        let block = provider
+            .get_block_by_number(alloy::primitives::U64::from(block_number).into(), true)
+            .await?;
+
+        let block = match block {
+            Some(b) => b,
+            None => return Err(anyhow!("Block {} not found", block_number)),
+        };
+
         let block_hash = block.header.hash;
         let timestamp = block.header.timestamp;
 
-        debug!("Processing block {} ({})", block_number, block_hash);
-
-        // Fetch full block with transactions
-        let full_block = provider
-            .get_block_by_number(block_number.into(), true)
-            .await?
-            .context("Block not found")?;
-
-        // Fetch receipts for all transactions
         let mut transactions = Vec::new();
         let mut receipts = Vec::new();
 
-        // Handle transactions - they come as full transactions when full_block is requested with true
-        if let Some(txs) = full_block.transactions.as_transactions() {
+        if let Some(txs) = block.transactions.as_transactions() {
             for tx in txs {
                 let tx_hash = tx.tx_hash();
                 
-                // Convert to our Transaction type
                 let our_tx = Transaction {
                     hash: tx_hash,
                     from: tx.from,
@@ -158,17 +184,16 @@ impl BlockWatcher {
                     input: tx.input.clone(),
                     nonce: alloy::primitives::U64::from(tx.nonce),
                     block_number: Some(alloy::primitives::U64::from(block_number)),
-                    block_hash: Some(block_hash),
+                    block_hash: Some(block.header.hash),
                     transaction_index: tx.transaction_index.map(alloy::primitives::U64::from),
                 };
                 transactions.push(our_tx.clone());
 
-                // Get receipt
                 if let Ok(Some(receipt)) = provider.get_transaction_receipt(tx_hash).await {
                     let our_receipt = TransactionReceipt {
                         transaction_hash: tx_hash,
                         block_number: alloy::primitives::U64::from(block_number),
-                        block_hash,
+                        block_hash: block.header.hash,
                         transaction_index: alloy::primitives::U64::from(receipt.transaction_index.unwrap_or_default()),
                         from: tx.from,
                         to: tx.to,
@@ -188,7 +213,6 @@ impl BlockWatcher {
                     };
                     receipts.push(our_receipt.clone());
 
-                    // Check for contract deployment
                     if let Some(contract_address) = receipt.contract_address {
                         Self::handle_deployment(
                             provider,
@@ -197,32 +221,29 @@ impl BlockWatcher {
                             contract_address,
                             &our_tx,
                             &our_receipt,
-                            timestamp,
+                            block.header.timestamp,
                         ).await?;
                     }
                 }
             }
         }
 
-        // Create block header
         let header = BlockHeader {
             number: alloy::primitives::U64::from(block_number),
-            hash: block_hash,
+            hash: block.header.hash,
             parent_hash: block.header.parent_hash,
-            timestamp: alloy::primitives::U64::from(timestamp),
+            timestamp: alloy::primitives::U64::from(block.header.timestamp),
             base_fee_per_gas: block.header.base_fee_per_gas.map(|v| alloy::primitives::U256::from(v as u64)),
             gas_used: alloy::primitives::U256::from(block.header.gas_used as u64),
             gas_limit: alloy::primitives::U256::from(block.header.gas_limit as u64),
         };
 
-        // Send to processors
         let _ = processor_tx.send((header, transactions, receipts));
-
         Ok(())
     }
 
     async fn handle_deployment(
-        provider: &BoxedProvider,
+        provider: &alloy::providers::RootProvider<alloy::transports::http::Http<reqwest::Client>>,
         deployments: &Arc<DashMap<String, ContractDeployment>>,
         deployment_tx: &mpsc::UnboundedSender<ContractDeployment>,
         contract_address: alloy::primitives::Address,
@@ -232,19 +253,15 @@ impl BlockWatcher {
     ) -> Result<()> {
         let addr_key = contract_address.to_string();
         
-        // Skip if already seen
         if deployments.contains_key(&addr_key) {
             return Ok(());
         }
 
-        // Fetch runtime bytecode
-        let bytecode = provider.get_code_at(contract_address).await?.to_vec();
+        let bytecode: Vec<u8> = provider.get_code_at(contract_address).await?.into();
 
-        // Check if proxy
         let (is_proxy, implementation) = Self::detect_proxy(provider, contract_address).await?;
 
-        // Check verification status (placeholder - would call Etherscan/Sourcify)
-        let verified = false; // TODO: implement
+        let verified = false;
 
         let deployment = ContractDeployment {
             address: contract_address,
@@ -259,22 +276,17 @@ impl BlockWatcher {
             abi: None,
         };
 
-        // Store
         deployments.insert(addr_key, deployment.clone());
-
-        // Notify subscribers
         let _ = deployment_tx.send(deployment);
 
         info!("New contract deployment: {} at block {}", contract_address, receipt.block_number);
-
         Ok(())
     }
 
     async fn detect_proxy(
-        provider: &BoxedProvider,
+        provider: &alloy::providers::RootProvider<alloy::transports::http::Http<reqwest::Client>>,
         address: alloy::primitives::Address,
     ) -> Result<(bool, Option<alloy::primitives::Address>)> {
-        // Check EIP-1967 implementation slot
         let impl_slot = alloy::primitives::StorageKey::from(
             alloy::primitives::keccak256("eip1967.proxy.implementation")
         );
@@ -287,7 +299,6 @@ impl BlockWatcher {
             }
         }
 
-        // Check EIP-1822 (UUPS) proxiable slot
         let proxiable_slot = alloy::primitives::StorageKey::from(
             alloy::primitives::keccak256("eip1967.proxy.proxiable")
         );
@@ -303,7 +314,6 @@ impl BlockWatcher {
         Ok((false, None))
     }
 
-    /// Get recent deployments
     pub async fn recent_deployments(&self, limit: usize) -> Vec<ContractDeployment> {
         self.deployments
             .iter()
@@ -312,7 +322,6 @@ impl BlockWatcher {
             .collect()
     }
 
-    /// Get deployment by address
     pub fn get_deployment(&self, address: &alloy::primitives::Address) -> Option<ContractDeployment> {
         self.deployments.get(&address.to_string()).map(|v| v.clone())
     }

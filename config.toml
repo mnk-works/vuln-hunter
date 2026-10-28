@@ -1,6 +1,9 @@
 # vuln-hunter Configuration
 
-[chains]
+# Default RPC endpoints (used as fallback)
+rpc_url = "https://api.avax.network/ext/bc/C/rpc"
+ws_url = "wss://api.avax.network/ext/bc/C/ws"
+
 # Chain configurations
 [[chains]]
 chain_id = 43114
@@ -44,12 +47,12 @@ watch_unverified_only = true
 # Watch upgradeable proxies
 watch_proxies = true
 
-# Function selectors to flag as interesting (4-byte hex)
+# Function selectors to flag as interesting (4-byte hex arrays)
 # Example: flashLoan, createTranche, draw, repay
 interesting_selectors = [
-    "5cff2d4c",  # Aave V3 flashLoan
-    "ea7b0dec",  # Fence createTranche (from exploit)
-    "767081d1",  # Fence draw (from exploit)
+    [0x5c, 0xff, 0x2d, 0x4c],  # Aave V3 flashLoan
+    [0xea, 0x7b, 0x0d, 0xec],  # Fence createTranche (from exploit)
+    [0x76, 0x70, 0x81, 0xd1],  # Fence draw (from exploit)
 ]
 
 [alerting]
