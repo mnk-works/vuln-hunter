@@ -1,5 +1,5 @@
-//! Transaction pool watcher: monitors pending transactions for contract deployments,
-//! large value transfers, and suspicious patterns.
+// Transaction pool watcher: monitors pending transactions for contract deployments,
+// large value transfers, and suspicious patterns.
 
 use futures::StreamExt;
 use vuln_common::{Transaction, HunterConfig};

@@ -1,11 +1,14 @@
 //! Shared types and utilities for vuln-hunter
 
-use alloy::primitives::{Address as PrimitiveAddress, Bytes, B256, U256 as PrimitiveU256, U64};
+use alloy::primitives::{Address as PrimitiveAddress, Bytes as PrimitiveBytes, B256 as PrimitiveB256, U256 as PrimitiveU256, U64 as PrimitiveU64};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub type Address = PrimitiveAddress;
 pub type U256 = PrimitiveU256;
+pub type U64 = PrimitiveU64;
+pub type B256 = PrimitiveB256;
+pub type Bytes = PrimitiveBytes;
 
 /// Block header with minimal fields we care about
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,6 +171,7 @@ pub struct CodeLocation {
 pub struct Finding {
     pub id: String,
     pub contract: Address,
+    pub vulnerability_type: String,
     pub risk_factors: Vec<RiskFactor>,
     pub overall_severity: Severity,
     pub exploitability_score: f64, // 0.0 - 1.0

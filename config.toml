@@ -1,15 +1,15 @@
 # vuln-hunter Configuration
 
 # Default RPC endpoints (used as fallback)
-rpc_url = "https://api.avax.network/ext/bc/C/rpc"
-ws_url = "wss://api.avax.network/ext/bc/C/ws"
+rpc_url = "https://avalanche.drpc.org"
+ws_url = "wss://avalanche.drpc.org"
 
 # Chain configurations
 [[chains]]
 chain_id = 43114
 name = "Avalanche C-Chain"
-rpc_url = "https://api.avax.network/ext/bc/C/rpc"
-ws_url = "wss://api.avax.network/ext/bc/C/ws"
+rpc_url = "https://avalanche.drpc.org"
+ws_url = "wss://avalanche.drpc.org"
 explorer_api_key = ""  # Snowtrace API key
 native_token = "AVAX"
 native_token_usd = 35.0

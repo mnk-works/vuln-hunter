@@ -83,3 +83,9 @@ pub trait BlockProcessor: Send + Sync {
 pub trait DeploymentHandler: Send + Sync {
     async fn on_deployment(&self, deployment: &ContractDeployment) -> Result<()>;
 }
+
+// Re-export types
+pub use block_watcher::BlockWatcher;
+pub use tx_pool::TxPoolWatcher;
+pub use event_indexer::{EventIndexer, IndexedEvent, EventType, DecodedEvent};
+pub use tvl_tracker::{TVLTracker, TVLInfo, TVLUpdate};
