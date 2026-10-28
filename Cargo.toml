@@ -1,0 +1,58 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["modemnakata"]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full", "tracing"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Ethereum/RPC
+alloy = { version = "0.3", features = ["full", "rpc", "transport-ws", "provider-ws", "serde"] }
+revm = { version = "29", features = ["database", "compiler", "handler", "precompile"] }
+
+# Configuration
+figment = { version = "0.10", features = ["toml"] }
+config = "0.14"
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Networking
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+url = "2.5"
+toml = "0.8"
+
+# Data structures
+parking_lot = "0.12"
+dashmap = "6.1"
+bytes = "1.0"
+hex = "0.4"
+
+# Async traits
+async-trait = "0.1"
+
+# Testing
+mockall = { version = "0.13", features = ["nightly"] }
+
+[profile.dev]
+opt-level = 1
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

@@ -1,0 +1,67 @@
+# vuln-hunter Configuration
+
+[chains]
+# Chain configurations
+[[chains]]
+chain_id = 43114
+name = "Avalanche C-Chain"
+rpc_url = "https://api.avax.network/ext/bc/C/rpc"
+ws_url = "wss://api.avax.network/ext/bc/C/ws"
+explorer_api_key = ""  # Snowtrace API key
+native_token = "AVAX"
+native_token_usd = 35.0
+
+# Ethereum Mainnet (uncomment to enable)
+# [[chains]]
+# chain_id = 1
+# name = "Ethereum Mainnet"
+# rpc_url = "https://eth.llamarpc.com"
+# ws_url = "wss://eth.llamarpc.com"
+# explorer_api_key = ""  # Etherscan API key
+# native_token = "ETH"
+# native_token_usd = 2500.0
+
+# Arbitrum (uncomment to enable)
+# [[chains]]
+# chain_id = 42161
+# name = "Arbitrum One"
+# rpc_url = "https://arb1.arbitrum.io/rpc"
+# ws_url = "wss://arb1.arbitrum.io/ws"
+# explorer_api_key = ""
+# native_token = "ETH"
+# native_token_usd = 2500.0
+
+[filters]
+# Minimum TVL in USD to consider a contract interesting
+min_tvl_usd = 10000.0
+
+# Maximum contract age in blocks to analyze (0 = no limit)
+max_contract_age_blocks = 100000
+
+# Only watch unverified contracts
+watch_unverified_only = true
+
+# Watch upgradeable proxies
+watch_proxies = true
+
+# Function selectors to flag as interesting (4-byte hex)
+# Example: flashLoan, createTranche, draw, repay
+interesting_selectors = [
+    "5cff2d4c",  # Aave V3 flashLoan
+    "ea7b0dec",  # Fence createTranche (from exploit)
+    "767081d1",  # Fence draw (from exploit)
+]
+
+[alerting]
+# Minimum severity to alert on
+min_severity = "Medium"
+
+# Webhook URLs for alerts
+webhook_urls = []
+
+# Discord webhook
+# discord_webhook = "https://discord.com/api/webhooks/..."
+
+# Telegram
+# telegram_bot_token = ""
+# telegram_chat_id = ""

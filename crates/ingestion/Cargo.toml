@@ -1,0 +1,20 @@
+[package]
+name = "vuln-ingestion"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+
+[dependencies]
+vuln-common = { path = "../common" }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+alloy = { workspace = true, features = ["full", "rpc", "transport-ws", "serde", "network", "provider-ws"] }
+futures = "0.3"
+tokio-stream = "0.1"
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+config = { workspace = true }
+figment = { workspace = true }
+async-trait = { workspace = true }

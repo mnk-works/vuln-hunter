@@ -1,0 +1,17 @@
+[package]
+name = "vuln-cli"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+
+[dependencies]
+vuln-common = { path = "../common" }
+vuln-ingestion = { path = "../ingestion" }
+anyhow = { workspace = true }
+clap = { workspace = true }
+figment = { workspace = true, features = ["env"] }
+toml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
